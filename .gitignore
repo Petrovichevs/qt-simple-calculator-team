@@ -2,5 +2,14 @@
 .vs/
 /build*/
 /out/
+build/
 CMakeUserPresets.json
 *.user
+*.pro.user
+CMakeCache.txt
+CMakeFiles/
+*.o
+*.a
+*.so
+.qt/
+*.autosave
