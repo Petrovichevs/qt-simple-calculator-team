@@ -1,81 +1,93 @@
 # Simple Calculator
 
-A desktop calculator built with C++ and Qt Widgets.
+Настольный калькулятор на C++ и Qt Widgets.
 
-## Features
+## Возможности
 
-- **Expression editor:** type or paste expressions with parentheses and operator precedence.
-- **History:** the latest 100 successful calculations are saved between launches. Click a result
-  to reuse it, or use Clear history. Date, time and angle mode appear in the item's tooltip.
-- **Memory:** MC clears memory, MR recalls it, M+ adds the current expression's value,
-  and M- subtracts it. The M indicator's tooltip shows the stored number. Memory lasts for the session.
-- **Light and dark themes:** the choice is saved automatically.
-- **Scientific mode:** sin, cos, tan, sqrt, ln, log (base 10), abs, square, reciprocal,
-  arbitrary powers, pi and e. The angle selector supports degrees and radians.
+- **Редактор выражений:** ввод и вставка выражений со скобками и учётом приоритета операций.
+- **История:** последние 100 успешных вычислений сохраняются между запусками. Нажмите на результат,
+  чтобы использовать его снова, или на Clear history, чтобы очистить историю. В подсказке записи
+  отображаются дата, время и режим углов.
+- **Память:** MC очищает память, MR возвращает сохранённое число, M+ прибавляет значение текущего
+  выражения к памяти, а M- вычитает его. Подсказка индикатора M показывает сохранённое число.
+  Память действует до закрытия приложения.
+- **Светлая и тёмная темы:** выбранная тема сохраняется автоматически.
+- **Инженерный режим:** sin, cos, tan, sqrt, ln, log (по основанию 10), abs, квадрат числа,
+  обратное число, возведение в произвольную степень, константы pi и e. Углы можно задавать
+  в градусах или радианах.
 
-## Input
+## Ввод и вычисления
 
-The expression line supports normal cursor movement, selection, copy and paste. Press Enter or `=`
-to calculate, Escape or C to clear. Backspace/Delete edit the expression normally; the Del button
-removes text before the cursor, or clears a completed result. Invalid expressions remain editable,
-with an explanatory message below the result.
+В строке выражения можно перемещать курсор, выделять, копировать и вставлять текст. Для вычисления
+нажмите Enter или `=`, для очистки — Escape или C. Клавиши Backspace и Delete редактируют выражение
+обычным образом. Кнопка Del удаляет текст перед курсором или очищает готовый результат.
+При ошибке выражение остаётся доступным для редактирования, а под результатом появляется пояснение.
 
-Digits start a new expression after a result; operators continue from it. Both `.` and `,` are
-accepted decimal separators. The display uses up to 16 significant digits, while recalled values
-and the expression line use 17 to preserve double precision. Input is limited to 512 characters
-and 64 nested unary/group/function levels. Arithmetic uses `double`, not exact decimal arithmetic.
+После получения результата ввод цифры начинает новое выражение, а оператор продолжает вычисление
+с этим результатом. Десятичным разделителем может быть точка `.` или запятая `,`.
+На дисплее выводится до 16 значащих цифр; в строке выражения и при повторном использовании значений —
+до 17, чтобы сохранить точность `double`. Длина выражения ограничена 512 символами, глубина
+вложенности унарных операций, скобок и функций — 64 уровнями. Вычисления выполняются с типом
+`double`, поэтому точность десятичных дробей ограничена.
 
-| Expression | Meaning/result |
+| Выражение | Результат или пояснение |
 | --- | --- |
 | `2 + 3 * (4 - 1)` | `11` |
-| `2 + 3 * 4` | `14` (multiplication has priority) |
-| `2^3^2` | `512` (powers associate to the right) |
-| `-2^2` | `-4`; use `(-2)^2` for `4` |
+| `2 + 3 * 4` | `14`: умножение выполняется раньше сложения |
+| `2^3^2` | `512`: степени вычисляются справа налево |
+| `-2^2` | `-4`; чтобы получить `4`, введите `(-2)^2` |
 | `200 + 10%` | `220` |
 | `200 - 10%` | `180` |
 | `200 * 10%` | `20` |
 | `sqrt(81) + log(100)` | `11` |
-| `sin(30)` in Degrees | approximately `0.5` |
-| `sin(pi/2)` in Radians | approximately `1` |
-| `1e-3` | scientific notation for `0.001` |
+| `sin(30)` в режиме Degrees | Приблизительно `0.5` |
+| `sin(pi/2)` в режиме Radians | Приблизительно `1` |
+| `1e-3` | Научная запись числа `0.001` |
 
-A standalone percentage to the right of `+` or `-` is relative to the left value. In products,
-quotients and powers, `%` is the operand divided by 100: `200 + 10% * 2` therefore gives `200.2`.
-Write multiplication explicitly (`2*pi`, `2*(3+1)`). The on-screen parenthesis and constant buttons
-insert `*` after a completed operand when needed.
+Отдельный процентный операнд справа от `+` или `-` вычисляется относительно левого значения.
+В произведениях, частных и степенях `%` означает деление операнда на 100: поэтому выражение
+`200 + 10% * 2` даёт `200.2`. При ручном вводе указывайте умножение явно: `2*pi`, `2*(3+1)`.
+Кнопки скобок и констант при необходимости вставляют `*` после завершённого операнда.
 
-Scientific function buttons wrap selected text, or the entire current expression when it ends in
-an operand. Otherwise they insert a function template and put the cursor inside its parentheses.
-`+/-` negates the selection or the current expression; after an operator it starts a negative operand.
-MR and history recall fill a pending operand; otherwise they replace the expression with the saved value.
+Кнопки инженерных функций применяют функцию к выделенному тексту или ко всему текущему выражению,
+если оно заканчивается операндом. В остальных случаях вставляется шаблон функции, а курсор
+помещается внутрь скобок. Кнопка `+/-` меняет знак выделения или текущего выражения; после оператора
+она начинает ввод отрицательного операнда. MR и выбор записи истории подставляют значение
+на место ожидаемого операнда, а в остальных случаях заменяют им выражение.
 
-Division by zero, non-finite results, negative square roots, non-positive logarithms and undefined
-tangents produce messages. Complex numbers are not supported. Very small finite values may underflow
-or round to zero with floating-point arithmetic.
+Деление на ноль, бесконечный или неопределённый результат, квадратный корень из отрицательного числа,
+логарифм неположительного числа и неопределённый тангенс сопровождаются сообщением об ошибке.
+Комплексные числа не поддерживаются. Очень малые значения при вычислениях с плавающей точкой
+могут округляться до нуля или выходить за нижнюю границу представимого диапазона.
 
-History, theme, angle mode and panel visibility use QSettings under organization
-`QtSimpleCalculatorTeam`, application `Calculator` (on Windows, the current user's registry).
-Calculations are stored locally; there is no network service.
+История, тема, режим углов и видимость панелей сохраняются через QSettings: организация
+`QtSimpleCalculatorTeam`, приложение `Calculator`. В Windows используется реестр текущего
+пользователя. Данные хранятся локально; сетевые сервисы не используются.
 
-## Build with CMake
+## Сборка через CMake
 
-Requirements: CMake 3.16+, Qt 5.12+ with Widgets, and a C++11 compiler. Use a Qt kit matching
-the compiler and architecture. Replace the Qt path with your installation:
+Требования: CMake 3.16 или новее, Qt 5.12 или новее в ветке Qt 5 с модулем Widgets и компилятор
+с поддержкой C++11. Комплект Qt должен соответствовать компилятору и архитектуре.
+Выполните команды из корня репозитория, заменив путь к Qt на путь к своей установке:
 
 ```text
 cmake -S . -B build -DCMAKE_PREFIX_PATH="C:/Qt/5.15.2/msvc2019_64" -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release --parallel
 ```
 
-For Ninja with MSVC, use a Visual Studio developer command prompt and add `-G Ninja` when configuring.
-Qt Creator can open `CMakeLists.txt` directly with a Qt 5 kit. On Linux/macOS, point `CMAKE_PREFIX_PATH`
-to the relevant Qt installation, or omit it if Qt is discoverable.
+Для Ninja с MSVC используйте командную строку разработчика Visual Studio и добавьте `-G Ninja`
+в команду конфигурации. В Qt Creator можно открыть `CMakeLists.txt` и выбрать комплект Qt 5.
+В Linux и macOS задайте `CMAKE_PREFIX_PATH` для своей установки Qt или опустите этот параметр,
+если CMake находит Qt автоматически.
 
-The executable is in `build` for Ninja or `build/Release` for Visual Studio. On macOS it is an app
-bundle. On Windows, put the matching Qt `bin` directory on PATH to launch it, or use `windeployqt`
-on the executable to prepare a distributable application.
+При использовании Ninja исполняемый файл находится в `build`, а при использовании генератора
+Visual Studio — в `build/Release`. В macOS создаётся пакет приложения. Для запуска в Windows
+добавьте каталог `bin` соответствующей установки Qt в PATH. Чтобы подготовить приложение
+к распространению, обработайте исполняемый файл утилитой `windeployqt`.
 
-## Build with qmake
+## Сборка через qmake
+
+Выполните команды из корня репозитория:
 
 ```text
 mkdir build-qmake
@@ -84,9 +96,11 @@ qmake ../simpleCalculator.pro
 make
 ```
 
-For MSVC, use `nmake` in a developer command prompt with Qt on PATH.
+Для MSVC используйте `nmake` в командной строке разработчика, добавив каталог `bin` Qt в PATH.
 
-CMake builds the application only. Existing regression sources in `tests/` refer to the earlier
-calculator behavior; they have not been adapted or run for this feature update.
+CMake собирает только приложение. Исходники регрессионных тестов в `tests/` относятся к прежнему
+поведению калькулятора; для обновления с новыми функциями они не адаптировались и не запускались.
 
-License: MIT
+## Лицензия
+
+MIT. Текст лицензии находится в [LICENSE.md](LICENSE.md).
