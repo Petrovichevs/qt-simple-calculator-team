@@ -2,25 +2,28 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
-#include <QAbstractButton>
-#include <QKeyEvent>
 
-namespace Ui {
-class MainWindow;
-}
+class QAbstractButton;
+class QCheckBox;
+class QComboBox;
+class QLabel;
+class QListWidget;
+class QSettings;
+namespace Ui { class MainWindow; }
 
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
-
 public:
-    explicit MainWindow(QWidget *parent = 0);
+    explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
 
-private slots:
-    void numberGroup_clicked(QAbstractButton*);
-    void actionGroup_clicked(QAbstractButton*);
+protected:
+    bool eventFilter(QObject *object, QEvent *event) override;
 
+private:
+    void numberGroup_clicked(QAbstractButton *button);
+    void actionGroup_clicked(QAbstractButton *button);
     void on_actionDel_clicked();
     void on_actionCalc_clicked();
     void on_comma_clicked();
@@ -30,24 +33,27 @@ private slots:
 
 private:
     Ui::MainWindow *ui;
-    //Digit limit
-    const int DIGIT_LIMIT = 16;
-    enum InputState { EnteringNumber, WaitingForOperand, ResultShown, Error };
-    InputState inputState;
-    //Last operator requested
-    QChar storedOperator;
-    //Flag to check whether a number is stored in memory
-    bool hasStoredNumber;
-    //Stored number
-    double storedNumber;
-    //Calculate result based on stored number and displayed number
-    bool calculate_result();
-    void startNewEntry();
-    void showError(const QString &message);
-    bool showNumber(double number);
+    QSettings *settings;
+    QListWidget *history;
+    QLabel *memoryIndicator;
+    QLabel *message;
+    QComboBox *angleMode;
+    QCheckBox *darkTheme;
+    QWidget *sciencePanel;
+    bool resultShown = false;
+    bool hasMemory = false;
+    double memory = 0.0;
 
-protected:
-    void keyPressEvent(QKeyEvent *e);
+    void insertText(QString text, bool continueResult = false);
+    void insertValue(double value);
+    void applyFunction(const QString &name);
+    bool currentValue(double &value);
+    void memoryAction(const QString &action);
+    void updateMemory();
+    void applyTheme();
+    void addHistory(const QString &expression, double value);
+    void loadHistory();
+    void saveHistory();
 };
 
-#endif // MAINWINDOW_H
+#endif

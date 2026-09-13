@@ -14,6 +14,8 @@ add_executable(simpleCalculator WIN32 MACOSX_BUNDLE
     main.cpp
     mainwindow.cpp
     mainwindow.h
+    expression.cpp
+    expression.h
     mainwindow.ui
 )
 target_link_libraries(simpleCalculator PRIVATE Qt5::Widgets)

@@ -1,315 +1,438 @@
 #include "mainwindow.h"
+#include "expression.h"
 #include "ui_mainwindow.h"
 
+#include <QCheckBox>
+#include <QComboBox>
+#include <QDateTime>
+#include <QDockWidget>
+#include <QGridLayout>
+#include <QKeyEvent>
+#include <QLabel>
+#include <QListWidget>
+#include <QPushButton>
+#include <QRegularExpression>
+#include <QSettings>
+#include <QVBoxLayout>
 #include <cmath>
 
 namespace {
-int digitCount(const QString &text)
+QString number(double value) { return QString::number(value == 0.0 ? 0.0 : value, 'g', 17); }
+bool endsOperand(const QString &text)
 {
-    int count = 0;
-    for (int i = 0; i < text.size(); ++i) {
-        if (text.at(i).isDigit()) {
-            ++count;
-        }
-    }
-    return count;
+    if (text.isEmpty()) return false;
+    const QChar last = text.back();
+    return last.isDigit() || last.isLetter() || last == ')' || last == '%' || last == '.';
 }
 }
 
-MainWindow::MainWindow(QWidget *parent) :
-    QMainWindow(parent),
-    ui(new Ui::MainWindow),
-    inputState(EnteringNumber),
-    hasStoredNumber(false),
-    storedNumber(0.0)
+MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent),
+    ui(new Ui::MainWindow), settings(new QSettings("QtSimpleCalculatorTeam", "Calculator", this))
 {
     ui->setupUi(this);
-    ui->displayPanel->clear();
+    setMinimumSize(420, 520);
+    resize(760, 600);
 
-    connect(ui->numberGroup, SIGNAL(buttonClicked(QAbstractButton*)),
-            this, SLOT(numberGroup_clicked(QAbstractButton*)));
-    connect(ui->actionGroup, SIGNAL(buttonClicked(QAbstractButton*)),
-            this, SLOT(actionGroup_clicked(QAbstractButton*)));
+    auto *options = new QHBoxLayout;
+    auto *scientific = new QCheckBox(tr("Scientific"), this);
+    scientific->setObjectName("scientificMode");
+    darkTheme = new QCheckBox(tr("Dark theme"), this);
+    darkTheme->setObjectName("darkTheme");
+    options->addWidget(scientific);
+    options->addStretch();
+    options->addWidget(darkTheme);
+    ui->verticalLayout->insertLayout(0, options);
 
-    setFixedSize(QSize(306, 319));
-}
+    message = new QLabel(this);
+    message->setObjectName("message");
+    message->setWordWrap(true);
+    message->setMinimumHeight(34);
+    ui->verticalLayout->addWidget(message);
 
-MainWindow::~MainWindow()
-{
-    delete ui;
-}
-
-void MainWindow::startNewEntry()
-{
-    if (inputState != EnteringNumber) {
-        ui->displayPanel->clear();
-        ui->displayPanel->setToolTip(QString());
-        inputState = EnteringNumber;
+    auto *memoryRow = new QHBoxLayout;
+    memoryIndicator = new QLabel(this);
+    memoryIndicator->setObjectName("memoryIndicator");
+    memoryRow->addWidget(memoryIndicator);
+    for (const QString &action : {QString("MC"), QString("MR"), QString("M+"), QString("M-")}) {
+        auto *button = new QPushButton(action, this);
+        button->setObjectName("memory" + action);
+        button->setFocusPolicy(Qt::NoFocus);
+        button->setToolTip(action == "MC" ? tr("Clear memory") : action == "MR" ? tr("Recall memory")
+                           : action == "M+" ? tr("Add current value to memory") : tr("Subtract current value from memory"));
+        memoryRow->addWidget(button);
+        connect(button, &QPushButton::clicked, this, [this, action] { memoryAction(action); });
     }
+    ui->verticalLayout->addLayout(memoryRow);
+
+    sciencePanel = new QWidget(this);
+    auto *scienceGrid = new QGridLayout(sciencePanel);
+    scienceGrid->setContentsMargins(0, 0, 0, 0);
+    angleMode = new QComboBox(sciencePanel);
+    angleMode->setObjectName("angleMode");
+    angleMode->addItems({tr("Degrees"), tr("Radians")});
+    angleMode->setCurrentIndex(settings->value("radians", false).toBool() ? 1 : 0);
+    scienceGrid->addWidget(angleMode, 0, 0, 1, 2);
+    auto *angleHint = new QLabel(tr("sin / cos / tan"), sciencePanel);
+    scienceGrid->addWidget(angleHint, 0, 2, 1, 2);
+    const QStringList functions = {"sin", "cos", "tan", "sqrt", "ln", "log", "abs", "x^2"};
+    for (int i = 0; i < functions.size(); ++i) {
+        const QString function = functions.at(i);
+        auto *button = new QPushButton(function, sciencePanel);
+        button->setFocusPolicy(Qt::NoFocus);
+        button->setObjectName("function" + function);
+        scienceGrid->addWidget(button, i / 4 + 1, i % 4);
+        connect(button, &QPushButton::clicked, this, [this, function] { applyFunction(function); });
+    }
+    const QStringList constants = {"pi", "e", "^", "1/x"};
+    for (int i = 0; i < constants.size(); ++i) {
+        const QString token = constants.at(i);
+        auto *button = new QPushButton(token, sciencePanel);
+        button->setFocusPolicy(Qt::NoFocus);
+        scienceGrid->addWidget(button, 3, i);
+        connect(button, &QPushButton::clicked, this, [this, token] {
+            if (token == "1/x") applyFunction(token);
+            else insertText(token, token == "^");
+        });
+    }
+    ui->verticalLayout->addWidget(sciencePanel);
+
+    auto *keypad = new QGridLayout;
+    const QStringList labels = {"C", "Del", "%", "/", "7", "8", "9", "*",
+                                "4", "5", "6", "-", "1", "2", "3", "+",
+                                "+/-", "0", ".", "=", "(", ")"};
+    const QStringList names = {"actionClear", "actionDel", "actionPercent", "actionDiv",
+        "num7", "num8", "num9", "actionMul", "num4", "num5", "num6", "actionMinus",
+        "num1", "num2", "num3", "actionPlus", "actionSign", "num0", "comma", "actionCalc",
+        "openParenthesis", "closeParenthesis"};
+    for (int i = 0; i < labels.size(); ++i) {
+        const QString label = labels.at(i);
+        auto *button = new QPushButton(label, this);
+        button->setObjectName(names.at(i));
+        button->setMinimumHeight(40);
+        button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        button->setFocusPolicy(Qt::NoFocus);
+        keypad->addWidget(button, i / 4, i >= 20 ? (i - 20) * 2 : i % 4,
+                         1, i >= 20 ? 2 : 1);
+        connect(button, &QPushButton::clicked, this, [this, label, button] {
+            if (label == "C") on_actionClear_clicked();
+            else if (label == "Del") on_actionDel_clicked();
+            else if (label == "%") on_actionPercent_clicked();
+            else if (label == "+/-") on_actionSign_clicked();
+            else if (label == "=") on_actionCalc_clicked();
+            else if (label == ".") on_comma_clicked();
+            else if (QString("+-*/").contains(label)) actionGroup_clicked(button);
+            else if (label.at(0).isDigit()) numberGroup_clicked(button);
+            else insertText(label, label == ")");
+        });
+    }
+    ui->verticalLayout->addLayout(keypad, 1);
+
+    auto *historyDock = new QDockWidget(tr("History"), this);
+    historyDock->setObjectName("historyDock");
+    historyDock->setFeatures(QDockWidget::NoDockWidgetFeatures);
+    auto *historyBody = new QWidget(historyDock);
+    auto *historyLayout = new QVBoxLayout(historyBody);
+    auto *historyHint = new QLabel(tr("Click a result to use it again"), historyBody);
+    historyHint->setWordWrap(true);
+    historyLayout->addWidget(historyHint);
+    history = new QListWidget(historyBody);
+    history->setObjectName("historyList");
+    history->setWordWrap(true);
+    history->setMinimumWidth(220);
+    historyLayout->addWidget(history, 1);
+    auto *clearHistory = new QPushButton(tr("Clear history"), historyBody);
+    historyLayout->addWidget(clearHistory);
+    historyDock->setWidget(historyBody);
+    addDockWidget(Qt::RightDockWidgetArea, historyDock);
+    auto *showHistory = new QCheckBox(tr("History"), this);
+    showHistory->setChecked(settings->value("historyVisible", true).toBool());
+    options->insertWidget(1, showHistory);
+    historyDock->setVisible(showHistory->isChecked());
+    connect(showHistory, &QCheckBox::toggled, this, [this, historyDock](bool visible) {
+        historyDock->setVisible(visible);
+        settings->setValue("historyVisible", visible);
+    });
+    connect(clearHistory, &QPushButton::clicked, this, [this] { history->clear(); saveHistory(); });
+    connect(history, &QListWidget::itemClicked, this, [this](QListWidgetItem *item) {
+        insertValue(item->data(Qt::UserRole).toDouble());
+    });
+
+    connect(scientific, &QCheckBox::toggled, this, [this](bool enabled) {
+        sciencePanel->setVisible(enabled);
+        settings->setValue("scientific", enabled);
+    });
+    scientific->setChecked(settings->value("scientific", false).toBool());
+    sciencePanel->setVisible(scientific->isChecked());
+    darkTheme->setChecked(settings->value("darkTheme", false).toBool());
+    connect(darkTheme, &QCheckBox::toggled, this, [this](bool dark) {
+        settings->setValue("darkTheme", dark);
+        applyTheme();
+    });
+    connect(angleMode, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int mode) {
+        settings->setValue("radians", mode == 1);
+    });
+    connect(ui->expressionInput, &QLineEdit::textEdited, this, [this] {
+        resultShown = false;
+        message->clear();
+    });
+    ui->expressionInput->installEventFilter(this);
+    loadHistory();
+    updateMemory();
+    applyTheme();
+    ui->expressionInput->setFocus();
+}
+
+MainWindow::~MainWindow() { delete ui; }
+
+void MainWindow::insertText(QString text, bool continueResult)
+{
+    auto *input = ui->expressionInput;
+    if (resultShown && !continueResult) input->clear();
+    resultShown = false;
+    const QString before = input->text().left(input->cursorPosition());
+    if (!input->hasSelectedText() && (text == "(" || text == "pi" || text == "e") && endsOperand(before))
+        text.prepend('*');
+    input->insert(text);
+    message->clear();
+    input->setFocus();
 }
 
 void MainWindow::numberGroup_clicked(QAbstractButton *button)
 {
-    startNewEntry();
-    QString displayLabel = ui->displayPanel->text();
-    // Replace an integer zero, but preserve the sign and fractional zeros.
-    if (displayLabel == "0" || displayLabel == "-0") {
-        displayLabel.chop(1);
+    auto *input = ui->expressionInput;
+    if (!resultShown && !input->hasSelectedText() && input->cursorPosition() == input->text().size()) {
+        const QRegularExpression zero("(^|[+*/^(\\-])0$");
+        if (zero.match(input->text()).hasMatch()) input->backspace();
     }
-    if (digitCount(displayLabel) >= DIGIT_LIMIT) {
-        return;
-    }
-    displayLabel.append(button->text());
-    ui->displayPanel->setText(displayLabel);
+    insertText(button->text());
 }
 
 void MainWindow::actionGroup_clicked(QAbstractButton *button)
 {
-    if (inputState == Error || ui->displayPanel->text().isEmpty()) {
+    const QString op = button->text();
+    auto *input = ui->expressionInput;
+    if (input->text().isEmpty()) {
+        if (op == "-") insertText(op);
         return;
     }
-    // Repeated operators replace the pending operator without calculating.
-    if (inputState == WaitingForOperand) {
-        storedOperator = button->text().at(0);
-        return;
+    if (!input->hasSelectedText() && input->cursorPosition() == input->text().size()) {
+        const QChar last = input->text().back();
+        if (QString("+*/^-").contains(last) && op != "-") input->backspace();
     }
-
-    if (hasStoredNumber) {
-        if (!calculate_result()) {
-            return;
-        }
-    } else {
-        bool ok = false;
-        storedNumber = ui->displayPanel->text().toDouble(&ok);
-        if (!ok || !std::isfinite(storedNumber)) {
-            showError(tr("Invalid number"));
-            return;
-        }
-    }
-    hasStoredNumber = true;
-    storedOperator = button->text().at(0);
-    inputState = WaitingForOperand;
+    insertText(op, true);
 }
 
 void MainWindow::on_actionDel_clicked()
 {
-    // The displayed first operand is already stored; it is not being edited.
-    if (inputState == WaitingForOperand || inputState == Error) {
-        return;
-    }
-    // A formatted result (possibly scientific notation) is not an input buffer.
-    startNewEntry();
-    QString displayLabel = ui->displayPanel->text();
-    displayLabel.chop(1);
-    if (displayLabel == "-") {
-        displayLabel.clear();
-    }
-    ui->displayPanel->setText(displayLabel);
-}
-
-void MainWindow::on_actionCalc_clicked()
-{
-    if (!hasStoredNumber || ui->displayPanel->text().isEmpty() ||
-        inputState == WaitingForOperand || inputState == Error) {
-        return;
-    }
-    if (calculate_result()) {
-        hasStoredNumber = false;
-        storedOperator = QChar();
-        inputState = ResultShown;
-    }
-}
-
-void MainWindow::on_comma_clicked()
-{
-    startNewEntry();
-    QString displayLabel = ui->displayPanel->text();
-    if (digitCount(displayLabel) >= DIGIT_LIMIT || displayLabel.contains('.')) {
-        return;
-    }
-    if (displayLabel.isEmpty()) {
-        displayLabel = "0";
-    }
-    displayLabel.append('.');
-    ui->displayPanel->setText(displayLabel);
+    if (resultShown) ui->expressionInput->clear();
+    else ui->expressionInput->backspace();
+    resultShown = false;
+    message->clear();
+    ui->expressionInput->setFocus();
 }
 
 void MainWindow::on_actionClear_clicked()
 {
-    ui->displayPanel->clear();
-    ui->displayPanel->setToolTip(QString());
-    inputState = EnteringNumber;
-    hasStoredNumber = false;
-    storedNumber = 0.0;
-    storedOperator = QChar();
+    ui->expressionInput->clear();
+    ui->displayPanel->setText("0");
+    message->clear();
+    resultShown = false;
+    ui->expressionInput->setFocus();
+}
+
+bool MainWindow::currentValue(double &value)
+{
+    const Calculation result = evaluateExpression(ui->expressionInput->text(), angleMode->currentIndex() == 0);
+    if (!result.ok) {
+        message->setText(result.error);
+        return false;
+    }
+    value = result.value;
+    return true;
+}
+
+void MainWindow::on_actionCalc_clicked()
+{
+    if (ui->expressionInput->text().trimmed().isEmpty() || resultShown) return;
+    const QString expression = ui->expressionInput->text();
+    double value = 0.0;
+    if (!currentValue(value)) {
+        ui->displayPanel->setText(tr("Error"));
+        return;
+    }
+    message->clear();
+    addHistory(expression, value);
+    ui->displayPanel->setText(QString::number(value, 'g', 16));
+    ui->expressionInput->setText(number(value));
+    resultShown = true;
+    ui->expressionInput->setFocus();
+}
+
+void MainWindow::on_comma_clicked()
+{
+    auto *input = ui->expressionInput;
+    const QString prefix = resultShown ? QString() : input->text().left(input->cursorPosition());
+    const auto match = QRegularExpression("[0-9]+[.,]?[0-9]*$").match(prefix);
+    if (!input->hasSelectedText() && match.hasMatch() && (match.captured().contains('.') || match.captured().contains(','))) return;
+    insertText(prefix.isEmpty() || !prefix.back().isDigit() ? "0." : ".");
 }
 
 void MainWindow::on_actionPercent_clicked()
 {
-    // A percentage needs an entered operand, not the previous displayed value.
-    if (inputState == WaitingForOperand || inputState == Error ||
-        ui->displayPanel->text().isEmpty()) {
-        return;
-    }
-    bool ok = false;
-    double percentage = ui->displayPanel->text().toDouble(&ok);
-    if (!ok || !std::isfinite(percentage)) {
-        showError(tr("Invalid number"));
-        return;
-    }
-    percentage /= 100.0;
-    if (hasStoredNumber && (storedOperator == '+' || storedOperator == '-')) {
-        percentage *= storedNumber;
-    }
-    if (showNumber(percentage)) {
-        inputState = ResultShown;
-    }
+    if (endsOperand(ui->expressionInput->text().left(ui->expressionInput->cursorPosition()))) insertText("%", true);
 }
 
 void MainWindow::on_actionSign_clicked()
 {
-    if (inputState == Error) {
-        return;
+    auto *input = ui->expressionInput;
+    if (input->hasSelectedText()) insertText("(-(" + input->selectedText() + "))", true);
+    else if (input->text().isEmpty() || !endsOperand(input->text())) insertText("-", true);
+    else {
+        input->setText("-(" + input->text() + ")");
+        resultShown = false;
+        message->clear();
     }
-    if (inputState == WaitingForOperand) {
-        startNewEntry();
-    }
-    QString displayLabel = ui->displayPanel->text();
-    if (displayLabel.isEmpty()) {
-        displayLabel = "0";
-    }
-    // Toggle the text to keep an unfinished fraction and negative zero editable.
-    if (displayLabel.startsWith('-')) {
-        displayLabel.remove(0, 1);
+    input->setFocus();
+}
+
+void MainWindow::applyFunction(const QString &name)
+{
+    auto *input = ui->expressionInput;
+    QString argument = input->selectedText();
+    const bool wholeExpression = argument.isEmpty() && endsOperand(input->text());
+    if (wholeExpression) argument = input->text();
+    QString replacement;
+    if (name == "x^2") replacement = "(" + argument + ")^2";
+    else if (name == "1/x") replacement = "1/(" + argument + ")";
+    else replacement = name + "(" + argument + ")";
+    if (wholeExpression) input->selectAll();
+    const int start = input->hasSelectedText() ? input->selectionStart() : input->cursorPosition();
+    insertText(replacement, true);
+    if (argument.isEmpty()) input->setCursorPosition(start + replacement.indexOf('(') + 1);
+}
+
+void MainWindow::insertValue(double value)
+{
+    auto *input = ui->expressionInput;
+    const QString prefix = input->text().left(input->cursorPosition());
+    // Recall supplies the pending operand; otherwise it starts a new expression.
+    if (!resultShown && !prefix.isEmpty() && !endsOperand(prefix)) {
+        insertText("(" + number(value) + ")", true);
     } else {
-        displayLabel.prepend('-');
+        input->setText(number(value));
+        ui->displayPanel->setText(QString::number(value, 'g', 16));
+        resultShown = true;
+        message->clear();
+        input->setFocus();
     }
-    ui->displayPanel->setText(displayLabel);
 }
 
-void MainWindow::showError(const QString &message)
+void MainWindow::memoryAction(const QString &action)
 {
-    on_actionClear_clicked();
-    inputState = Error;
-    ui->displayPanel->setText(tr("Error"));
-    ui->displayPanel->setToolTip(message);
-}
-
-bool MainWindow::showNumber(double number)
-{
-    if (!std::isfinite(number)) {
-        showError(tr("Numeric overflow"));
-        return false;
-    }
-    ui->displayPanel->setText(QString::number(number, 'g', DIGIT_LIMIT));
-    return true;
-}
-
-bool MainWindow::calculate_result()
-{
-    bool ok = false;
-    const double operand = ui->displayPanel->text().toDouble(&ok);
-    if (!ok || !std::isfinite(operand)) {
-        showError(tr("Invalid number"));
-        return false;
-    }
-
-    double result = storedNumber;
-    if (storedOperator == '+') {
-        result += operand;
-    } else if (storedOperator == '-') {
-        result -= operand;
-    } else if (storedOperator == 'x') {
-        result *= operand;
-    } else if (storedOperator == '/') {
-        if (operand == 0.0) {
-            showError(tr("Cannot divide by zero"));
-            return false;
-        }
-        result /= operand;
+    if (action == "MC") { memory = 0.0; hasMemory = false; }
+    else if (action == "MR") {
+        if (hasMemory) insertValue(memory);
     } else {
-        return false;
+        double value = 0.0;
+        if (!currentValue(value)) return;
+        const double next = action == "M+" ? memory + value : memory - value;
+        if (!std::isfinite(next)) { message->setText(tr("Memory overflow")); return; }
+        memory = next;
+        hasMemory = true;
+        message->clear();
     }
-
-    if (!showNumber(result)) {
-        return false;
-    }
-    storedNumber = result;
-    return true;
+    updateMemory();
 }
 
-//Keyboard buttons should call the corresponding functions
-void MainWindow::keyPressEvent(QKeyEvent *e) {
-    switch (e->key()) {
-        //Numbers
-        case Qt::Key_1:
-            numberGroup_clicked(ui->num1);
-            break;
-        case Qt::Key_2:
-            numberGroup_clicked(ui->num2);
-            break;
-        case Qt::Key_3:
-            numberGroup_clicked(ui->num3);
-            break;
-        case Qt::Key_4:
-            numberGroup_clicked(ui->num4);
-            break;
-        case Qt::Key_5:
-            numberGroup_clicked(ui->num5);
-            break;
-        case Qt::Key_6:
-            numberGroup_clicked(ui->num6);
-            break;
-        case Qt::Key_7:
-            numberGroup_clicked(ui->num7);
-            break;
-        case Qt::Key_8:
-            numberGroup_clicked(ui->num8);
-            break;
-        case Qt::Key_9:
-            numberGroup_clicked(ui->num9);
-            break;
-        case Qt::Key_0:
-            numberGroup_clicked(ui->num0);
-            break;
-        //Operators
-        case Qt::Key_Plus:
-            actionGroup_clicked(ui->actionPlus);
-            break;
-        case Qt::Key_Minus:
-            actionGroup_clicked(ui->actionMinus);
-            break;
-        case Qt::Key_Asterisk:
-            actionGroup_clicked(ui->actionMul);
-            break;
-        case Qt::Key_Slash:
-            actionGroup_clicked(ui->actionDiv);
-            break;
-        //Comma
-        case Qt::Key_Period:
-        case Qt::Key_Comma:
-            on_comma_clicked();
-            break;
-        //Return (enter)
-        case Qt::Key_Enter:
-        case Qt::Key_Return:
-        case Qt::Key_Equal:
+void MainWindow::updateMemory()
+{
+    memoryIndicator->setText(hasMemory ? "M" : "--");
+    memoryIndicator->setToolTip(hasMemory ? number(memory) : tr("Memory is empty"));
+}
+
+void MainWindow::addHistory(const QString &expression, double value)
+{
+    auto *item = new QListWidgetItem(expression + " = " + number(value));
+    item->setData(Qt::UserRole, value);
+    item->setData(Qt::UserRole + 1, expression);
+    const QString context = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm") + " / " + angleMode->currentText();
+    item->setData(Qt::UserRole + 2, context);
+    item->setToolTip(context);
+    history->insertItem(0, item);
+    while (history->count() > 100) delete history->takeItem(history->count() - 1);
+    saveHistory();
+}
+
+void MainWindow::saveHistory()
+{
+    settings->beginWriteArray("history", history->count());
+    for (int i = 0; i < history->count(); ++i) {
+        settings->setArrayIndex(i);
+        auto *item = history->item(i);
+        settings->setValue("expression", item->data(Qt::UserRole + 1));
+        settings->setValue("value", number(item->data(Qt::UserRole).toDouble()));
+        settings->setValue("context", item->data(Qt::UserRole + 2));
+    }
+    settings->endArray();
+    settings->sync();
+    if (settings->status() != QSettings::NoError) message->setText(tr("Could not save calculator settings"));
+}
+
+void MainWindow::loadHistory()
+{
+    const int count = qMin(settings->beginReadArray("history"), 100);
+    for (int i = 0; i < count; ++i) {
+        settings->setArrayIndex(i);
+        bool ok = false;
+        const double value = settings->value("value").toString().toDouble(&ok);
+        const QString expression = settings->value("expression").toString();
+        if (!ok || !std::isfinite(value) || expression.isEmpty() || expression.size() > 512) continue;
+        auto *item = new QListWidgetItem(expression + " = " + number(value), history);
+        item->setData(Qt::UserRole, value);
+        item->setData(Qt::UserRole + 1, expression);
+        item->setData(Qt::UserRole + 2, settings->value("context"));
+        item->setToolTip(settings->value("context").toString());
+    }
+    settings->endArray();
+}
+
+void MainWindow::applyTheme()
+{
+    const bool dark = darkTheme->isChecked();
+    const QString background = dark ? "#18212f" : "#f3f6fb";
+    const QString surface = dark ? "#243247" : "#ffffff";
+    const QString foreground = dark ? "#edf3ff" : "#17263d";
+    const QString border = dark ? "#41536d" : "#c4cfdf";
+    setStyleSheet(QString(
+        "QWidget { background:%1; color:%3; font-size:14px; }"
+        "QPushButton, QLineEdit, QListWidget, QComboBox { background:%2; border:1px solid %4; border-radius:6px; padding:8px; }"
+        "QPushButton:hover { border:1px solid #4387e8; }"
+        "QPushButton:pressed { background:#3873bd; color:white; }"
+        "QPushButton#actionCalc { background:#2166bd; color:white; font-weight:bold; }"
+        "QLabel#displayPanel { font-size:28px; font-weight:bold; }"
+        "QLabel#message { color:%5; }"
+        "QLabel#memoryIndicator { color:%6; font-weight:bold; }"
+        "QListWidget::item { padding:10px; border-bottom:1px solid %4; }"
+        "QListWidget::item:selected { background:#2166bd; color:white; }"
+        "QToolTip { background:%2; color:%3; border:1px solid %4; }")
+        .arg(background, surface, foreground, border, dark ? "#ffb2ad" : "#a82323", dark ? "#8ab8ff" : "#2166bd"));
+}
+
+bool MainWindow::eventFilter(QObject *object, QEvent *event)
+{
+    if (object == ui->expressionInput && event->type() == QEvent::KeyPress) {
+        auto *key = static_cast<QKeyEvent *>(event);
+        if (key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter || key->key() == Qt::Key_Equal) {
             on_actionCalc_clicked();
-            break;
-        //Backspace and delete
-        case Qt::Key_Backspace:
-            on_actionDel_clicked();
-            break;
-        case Qt::Key_Delete:
-            on_actionClear_clicked();
-            break;
-        //Percentage
-        case Qt::Key_Percent:
-            on_actionPercent_clicked();
-            break;
-        default:
-            QMainWindow::keyPressEvent(e);
-            return;
+            return true;
+        }
+        if (key->key() == Qt::Key_Escape) { on_actionClear_clicked(); return true; }
+        if (resultShown && !key->text().isEmpty() &&
+            !(key->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))) {
+            const QChar first = key->text().at(0);
+            if (first.isDigit() || first.isLetter() || QString(".,(").contains(first)) ui->expressionInput->clear();
+            resultShown = false;
+        }
     }
-    e->accept();
+    return QMainWindow::eventFilter(object, event);
 }
