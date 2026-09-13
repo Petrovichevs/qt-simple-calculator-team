@@ -32,8 +32,8 @@ private:
     Ui::MainWindow *ui;
     //Digit limit
     const int DIGIT_LIMIT = 16;
-    //Flag to check whether the previous button that was clicked was an operator
-    bool operatorClicked;
+    enum InputState { EnteringNumber, WaitingForOperand, ResultShown, Error };
+    InputState inputState;
     //Last operator requested
     QChar storedOperator;
     //Flag to check whether a number is stored in memory
@@ -41,7 +41,10 @@ private:
     //Stored number
     double storedNumber;
     //Calculate result based on stored number and displayed number
-    void calculate_result();
+    bool calculate_result();
+    void startNewEntry();
+    void showError(const QString &message);
+    bool showNumber(double number);
 
 protected:
     void keyPressEvent(QKeyEvent *e);

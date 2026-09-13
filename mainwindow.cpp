@@ -1,28 +1,37 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 
+#include <cmath>
+
+namespace {
+int digitCount(const QString &text)
+{
+    int count = 0;
+    for (int i = 0; i < text.size(); ++i) {
+        if (text.at(i).isDigit()) {
+            ++count;
+        }
+    }
+    return count;
+}
+}
+
 MainWindow::MainWindow(QWidget *parent) :
     QMainWindow(parent),
-    ui(new Ui::MainWindow)
+    ui(new Ui::MainWindow),
+    inputState(EnteringNumber),
+    hasStoredNumber(false),
+    storedNumber(0.0)
 {
     ui->setupUi(this);
-
-    //Set up empty display panel
     ui->displayPanel->clear();
 
-    //Set operator and store number flags to false
-    operatorClicked = false;
-    hasStoredNumber = false;
+    connect(ui->numberGroup, SIGNAL(buttonClicked(QAbstractButton*)),
+            this, SLOT(numberGroup_clicked(QAbstractButton*)));
+    connect(ui->actionGroup, SIGNAL(buttonClicked(QAbstractButton*)),
+            this, SLOT(actionGroup_clicked(QAbstractButton*)));
 
-    //Set number button group listener
-    ui->numberGroup->connect(ui->numberGroup,SIGNAL(buttonClicked(QAbstractButton*)),
-                             this, SLOT(numberGroup_clicked(QAbstractButton*)));
-    //Set operator button group listener
-    ui->actionGroup->connect(ui->actionGroup,SIGNAL(buttonClicked(QAbstractButton*)),
-                             this, SLOT(actionGroup_clicked(QAbstractButton*)));
-
-    //Set window fix width and height
-    this->setFixedSize(QSize(306, 319));
+    setFixedSize(QSize(306, 319));
 }
 
 MainWindow::~MainWindow()
@@ -30,196 +39,203 @@ MainWindow::~MainWindow()
     delete ui;
 }
 
-//==================================================================================
-//Slot functions
-//==================================================================================
-// Called whenever a number button is clicked
-void MainWindow::numberGroup_clicked(QAbstractButton* button)
+void MainWindow::startNewEntry()
 {
-    //Get string from display
-    QString displayLabel = ui->displayPanel->text();
-
-    /* Check if the previous button that was clicked was an operator button.
-     * If so, clear the display and set the flag to false. Then proceed to
-     * add the digit requested. */
-    if (operatorClicked) {
-        displayLabel.clear();
-        operatorClicked = false;
+    if (inputState != EnteringNumber) {
+        ui->displayPanel->clear();
+        ui->displayPanel->setToolTip(QString());
+        inputState = EnteringNumber;
     }
+}
 
-    //Append the digit only if we are not exceeding the digit limit
-    if (displayLabel.length() >= DIGIT_LIMIT) {
+void MainWindow::numberGroup_clicked(QAbstractButton *button)
+{
+    startNewEntry();
+    QString displayLabel = ui->displayPanel->text();
+    // Replace an integer zero, but preserve the sign and fractional zeros.
+    if (displayLabel == "0" || displayLabel == "-0") {
+        displayLabel.chop(1);
+    }
+    if (digitCount(displayLabel) >= DIGIT_LIMIT) {
         return;
     }
-
-    //Append requested digit
     displayLabel.append(button->text());
-
-    //Set number back to display
     ui->displayPanel->setText(displayLabel);
 }
 
-// Called whenever an action button is clicked
-void MainWindow::actionGroup_clicked(QAbstractButton* button)
+void MainWindow::actionGroup_clicked(QAbstractButton *button)
 {
-    /* If the previous button that was clicked was not an operator, then we just need to save the operator
-     * that was requested and exit.
-     * If it was though, we need to see whether we just need to save the number that is
-     * displayed or if there is already a number stored in memory, perform the calculation and
-     * store the result.
-     * Example for this case: 5 + 7 + -> We need to save 12 in memory and then save operator. */
+    if (inputState == Error || ui->displayPanel->text().isEmpty()) {
+        return;
+    }
+    // Repeated operators replace the pending operator without calculating.
+    if (inputState == WaitingForOperand) {
+        storedOperator = button->text().at(0);
+        return;
+    }
 
-    if (operatorClicked) {
-        storedOperator = button->text().at(0);
-    }
-    else {
-        if (hasStoredNumber) {
-            calculate_result();
+    if (hasStoredNumber) {
+        if (!calculate_result()) {
+            return;
         }
-        else {
-            //Set the flag to indicate that we now have a number stored in memory
-            hasStoredNumber = true;
-            //Get string from display
-            QString displayLabel = ui->displayPanel->text();
-            //Convert string to double and save
-            storedNumber = displayLabel.toDouble();
+    } else {
+        bool ok = false;
+        storedNumber = ui->displayPanel->text().toDouble(&ok);
+        if (!ok || !std::isfinite(storedNumber)) {
+            showError(tr("Invalid number"));
+            return;
         }
-        //Set the flag that the last button that was clicked was an operator
-        operatorClicked = true;
-        //Store operator in memory
-        storedOperator = button->text().at(0);
     }
+    hasStoredNumber = true;
+    storedOperator = button->text().at(0);
+    inputState = WaitingForOperand;
 }
 
 void MainWindow::on_actionDel_clicked()
 {
-    //Get string from display
-    QString displayLabel = ui->displayPanel->text();
-
-    //Check if label is empty
-    if (displayLabel.length() == 0) {
+    // The displayed first operand is already stored; it is not being edited.
+    if (inputState == WaitingForOperand || inputState == Error) {
         return;
     }
-
-    //Delete last digit from string
-    displayLabel.QString::chop(1);
-    //Set number back to display
+    // A formatted result (possibly scientific notation) is not an input buffer.
+    startNewEntry();
+    QString displayLabel = ui->displayPanel->text();
+    displayLabel.chop(1);
+    if (displayLabel == "-") {
+        displayLabel.clear();
+    }
     ui->displayPanel->setText(displayLabel);
 }
 
 void MainWindow::on_actionCalc_clicked()
 {
-    //Get string from display
-    QString displayLabel = ui->displayPanel->text();
-    /* A number must be saved in memory to be able calculate a result.
-     * In addition, a number with at least one digit should be present in the display and
-     * The last button that was clicked should not be an operator */
-
-    if (!hasStoredNumber || displayLabel.length() < 1 || operatorClicked) {
+    if (!hasStoredNumber || ui->displayPanel->text().isEmpty() ||
+        inputState == WaitingForOperand || inputState == Error) {
         return;
     }
-
-    //Calculate result and set in on display
-    calculate_result();
-
-    //Set stored number flag to false (we have it on screen now)
-    hasStoredNumber = false;
-
+    if (calculate_result()) {
+        hasStoredNumber = false;
+        storedOperator = QChar();
+        inputState = ResultShown;
+    }
 }
 
 void MainWindow::on_comma_clicked()
 {
-    //Get string from display
+    startNewEntry();
     QString displayLabel = ui->displayPanel->text();
-
-    /* Append the digit only if we are not exceeding the digit limit.
-     * More specifically in this case, we need 2 digits to be available.
-     * One for the comma and at least another one for a remaining digit.
-     * Also check if whether there is another comma already present. */
-    if (displayLabel.length() >= (DIGIT_LIMIT - 1) ||
-        displayLabel.contains('.', Qt::CaseSensitive)) {
+    if (digitCount(displayLabel) >= DIGIT_LIMIT || displayLabel.contains('.')) {
         return;
     }
-
-    //If label is empty, add zero and then append comma
-    if (displayLabel.length() == 0) {
+    if (displayLabel.isEmpty()) {
         displayLabel = "0";
     }
-
-    //Append comma
     displayLabel.append('.');
-    //Set number back to display
     ui->displayPanel->setText(displayLabel);
 }
 
 void MainWindow::on_actionClear_clicked()
 {
-    //Clear display label (for now)
     ui->displayPanel->clear();
-    //Set operator and store number flags to false
-    operatorClicked = false;
+    ui->displayPanel->setToolTip(QString());
+    inputState = EnteringNumber;
     hasStoredNumber = false;
+    storedNumber = 0.0;
+    storedOperator = QChar();
 }
 
 void MainWindow::on_actionPercent_clicked()
 {
-    //Get string from display
-    QString displayLabel = ui->displayPanel->text();
-    //Convert to double
-    double percentage = displayLabel.toDouble();
-    //Just multiply with 0.01 to make it a percentage
-    percentage *= 0.01;
-    //Since there might be an overflow, its best to convert the number carefully
-    displayLabel = QString::number(percentage,'g', DIGIT_LIMIT);
-    //Set number back to display
-    ui->displayPanel->setText(displayLabel);
+    // A percentage needs an entered operand, not the previous displayed value.
+    if (inputState == WaitingForOperand || inputState == Error ||
+        ui->displayPanel->text().isEmpty()) {
+        return;
+    }
+    bool ok = false;
+    double percentage = ui->displayPanel->text().toDouble(&ok);
+    if (!ok || !std::isfinite(percentage)) {
+        showError(tr("Invalid number"));
+        return;
+    }
+    percentage /= 100.0;
+    if (hasStoredNumber && (storedOperator == '+' || storedOperator == '-')) {
+        percentage *= storedNumber;
+    }
+    if (showNumber(percentage)) {
+        inputState = ResultShown;
+    }
 }
 
 void MainWindow::on_actionSign_clicked()
 {
-    //Get string from display
+    if (inputState == Error) {
+        return;
+    }
+    if (inputState == WaitingForOperand) {
+        startNewEntry();
+    }
     QString displayLabel = ui->displayPanel->text();
-    //Convert to double
-    double percentage = displayLabel.toDouble();
-    //Just multiply with -1 to change its sign
-    percentage *= -1;
-    //Convert the number carefully
-    displayLabel = QString::number(percentage,'g', DIGIT_LIMIT);
-    //Set number back to display
+    if (displayLabel.isEmpty()) {
+        displayLabel = "0";
+    }
+    // Toggle the text to keep an unfinished fraction and negative zero editable.
+    if (displayLabel.startsWith('-')) {
+        displayLabel.remove(0, 1);
+    } else {
+        displayLabel.prepend('-');
+    }
     ui->displayPanel->setText(displayLabel);
 }
 
-//==================================================================================
-//Helper functions
-//==================================================================================
-void MainWindow::calculate_result() {
-    //Get string from display
-    QString displayLabel = ui->displayPanel->text();
+void MainWindow::showError(const QString &message)
+{
+    on_actionClear_clicked();
+    inputState = Error;
+    ui->displayPanel->setText(tr("Error"));
+    ui->displayPanel->setToolTip(message);
+}
 
-    //If the displayed number ends with a comma, drop the comma.
-     if (displayLabel.endsWith('.',Qt::CaseSensitive)) {
-         displayLabel.QString::chop(1);
-     }
+bool MainWindow::showNumber(double number)
+{
+    if (!std::isfinite(number)) {
+        showError(tr("Numeric overflow"));
+        return false;
+    }
+    ui->displayPanel->setText(QString::number(number, 'g', DIGIT_LIMIT));
+    return true;
+}
 
-     //Decide what to do according to operation
-     if (storedOperator == '+') {
-         storedNumber += displayLabel.toDouble();
-     }
-     else if (storedOperator == '-') {
-         storedNumber -= displayLabel.toDouble();
-     }
-     else if (storedOperator == 'x') {
-         storedNumber *= displayLabel.toDouble();
-     }
-     else if (storedOperator == '/') {
-         storedNumber /= displayLabel.toDouble();
-     }
+bool MainWindow::calculate_result()
+{
+    bool ok = false;
+    const double operand = ui->displayPanel->text().toDouble(&ok);
+    if (!ok || !std::isfinite(operand)) {
+        showError(tr("Invalid number"));
+        return false;
+    }
 
-     //Since there might be an overflow, its best to convert the number carefully
-     displayLabel = QString::number(storedNumber,'g', DIGIT_LIMIT);
+    double result = storedNumber;
+    if (storedOperator == '+') {
+        result += operand;
+    } else if (storedOperator == '-') {
+        result -= operand;
+    } else if (storedOperator == 'x') {
+        result *= operand;
+    } else if (storedOperator == '/') {
+        if (operand == 0.0) {
+            showError(tr("Cannot divide by zero"));
+            return false;
+        }
+        result /= operand;
+    } else {
+        return false;
+    }
 
-     //Set number back to display
-     ui->displayPanel->setText(displayLabel);
+    if (!showNumber(result)) {
+        return false;
+    }
+    storedNumber = result;
+    return true;
 }
 
 //Keyboard buttons should call the corresponding functions
@@ -271,11 +287,13 @@ void MainWindow::keyPressEvent(QKeyEvent *e) {
             break;
         //Comma
         case Qt::Key_Period:
+        case Qt::Key_Comma:
             on_comma_clicked();
             break;
         //Return (enter)
         case Qt::Key_Enter:
         case Qt::Key_Return:
+        case Qt::Key_Equal:
             on_actionCalc_clicked();
             break;
         //Backspace and delete
@@ -289,5 +307,9 @@ void MainWindow::keyPressEvent(QKeyEvent *e) {
         case Qt::Key_Percent:
             on_actionPercent_clicked();
             break;
+        default:
+            QMainWindow::keyPressEvent(e);
+            return;
     }
+    e->accept();
 }

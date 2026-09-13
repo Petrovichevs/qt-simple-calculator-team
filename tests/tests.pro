@@ -1,0 +1,9 @@
+QT += core gui widgets testlib
+CONFIG += testcase console c++11
+CONFIG -= app_bundle
+TEMPLATE = app
+TARGET = calculator-tests
+INCLUDEPATH += ..
+SOURCES += tst_calculator.cpp ../mainwindow.cpp
+HEADERS += ../mainwindow.h
+FORMS += ../mainwindow.ui
