@@ -1,0 +1,6 @@
+# Local IDE state and out-of-source build directories
+.vs/
+/build*/
+/out/
+CMakeUserPresets.json
+*.user
