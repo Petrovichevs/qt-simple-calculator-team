@@ -1,6 +1,6 @@
 # Simple Calculator
 
-Настольный калькулятор на C++ и Qt Widgets.
+Калькулятор на C++ и Qt Widgets.
 
 ## Возможности
 
